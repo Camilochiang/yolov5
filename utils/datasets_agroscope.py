@@ -2,8 +2,8 @@
 """
 Dataloaders and dataset utils
 """
-
 import glob
+import sys
 import hashlib
 import json
 import os
@@ -24,13 +24,11 @@ import yaml
 from PIL import ExifTags, Image, ImageOps
 from torch.utils.data import DataLoader, Dataset, dataloader, distributed
 from tqdm import tqdm
-
 from utils.augmentations import Albumentations, augment_hsv, copy_paste, letterbox, mixup, random_perspective
 from utils.general import (LOGGER, NUM_THREADS, check_dataset, check_requirements, check_yaml, clean_str,
                            segments2boxes, xyn2xy, xywh2xyxy, xywhn2xyxy, xyxy2xywhn)
 from utils.torch_utils import torch_distributed_zero_first
 
-from cv_bridge import CvBridge         
 import rosbag
 import rospy
 from cv_bridge import CvBridge
@@ -301,6 +299,7 @@ class LoadROSBAG:
             # We adjust to focus in the middle of the camera
             self.imgT = self.img0.copy()
             self.imgT = self.imgT[int(delta_height):int(1024 + delta_height), int(delta_width):int(1024 + delta_width)]
+            self.count += 1
             time.sleep(1/self.fps)  # wait time
     
     def __iter__(self):
@@ -322,8 +321,6 @@ class LoadROSBAG:
         if cv2.waitKey(1) == ord('q') or self.count == self.frames:  # q to quit
             cv2.destroyAllWindows()
             raise StopIteration
-
-        self.count += 1            
 
         # Letterbox
         img_l = self.imgT.copy()
@@ -376,6 +373,7 @@ class LoadROS:
             self.img0 = np.frombuffer(data.data, dtype=np.uint8).reshape(data.height, data.width, -1)
             self.imgT = self.img0.copy()
             self.imgT = self.imgT[int(self.delta_height):int(1024 + self.delta_height), int(self.delta_width):int(1024 + self.delta_width)]
+            self.count += 1
             rospy.sleep(1/self.fps) # wait time
 
         except:
@@ -402,8 +400,6 @@ class LoadROS:
             time.sleep(0.01)
             cv2.destroyAllWindows()
             raise StopIteration
-
-        self.count += 1
 
         # Letterbox
         #self.imgT = frames_cut_queue.get()

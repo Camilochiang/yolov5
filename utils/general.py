@@ -33,6 +33,7 @@ import torchvision
 import yaml
 
 from utils.downloads import gsutil_getsize
+
 from utils.metrics import box_iou, fitness
 
 # Settings
@@ -85,15 +86,13 @@ def set_logging(name=None, verbose=VERBOSE):
     level = logging.INFO if (verbose and rank in (-1, 0)) else logging.WARNING
     log = logging.getLogger(name)
     log.setLevel(level)
-    handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter("%(message)s"))
-    handler.setLevel(level)
-    log.addHandler(handler)
-
+    #handler = logging.StreamHandler()
+    #handler.setFormatter(logging.Formatter("%(message)s"))
+    #handler.setLevel(level)
+    #log.addHandler(handler)
 
 set_logging()  # run before defining LOGGER
 LOGGER = logging.getLogger("yolov5")  # define globally (used in train.py, val.py, detect.py, etc.)
-
 
 def user_config_dir(dir='Ultralytics', env_var='YOLOV5_CONFIG_DIR'):
     # Return path of user configuration directory. Prefer environment variable if exists. Make dir if required.

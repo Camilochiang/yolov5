@@ -60,7 +60,7 @@ def run(weights=ROOT / 'yolov5s.pt',  # model.pt path(s)
         save_txt=False,  # save results to *.txt
         save_conf=False,  # save confidences in --save-txt labels
         save_crop=False,  # save cropped prediction boxes
-        nosave=False,  # do not save images/videos
+        nosave=True,  # do not save images/videos
         classes=None,  # filter by class: --class 0, or --class 0 2 3
         agnostic_nms=False,  # class-agnostic NMS
         augment=False,  # augmented inference
@@ -250,7 +250,7 @@ def run(weights=ROOT / 'yolov5s.pt',  # model.pt path(s)
                     vid_writer[i].write(im0)
 
         # Print time (inference-only)
-        LOGGER.info(f'{s}Done. ({t3 - t2:.3f}s)')
+        #LOGGER.info(f'{s}Done. ({t3 - t2:.3f}s)')
 
     # Print results
     #t = tuple(x / seen * 1E3 for x in dt)  # speeds per image
@@ -292,7 +292,7 @@ def parse_opt():
     parser.add_argument('--dnn', action='store_true', help='use OpenCV DNN for ONNX inference')
     opt = parser.parse_args()
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
-    print_args(FILE.stem, opt)
+    print_args(vars(opt))
     return opt
 
 

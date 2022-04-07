@@ -2,7 +2,6 @@
 """
 Image augmentation functions
 """
-
 import math
 import random
 
