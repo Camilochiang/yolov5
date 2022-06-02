@@ -17,6 +17,7 @@ from threading import Thread
 from zipfile import ZipFile
 
 import cv2
+import time
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -29,14 +30,15 @@ from utils.general import (LOGGER, NUM_THREADS, check_dataset, check_requirement
                            segments2boxes, xyn2xy, xywh2xyxy, xywhn2xyxy, xyxy2xywhn)
 from utils.torch_utils import torch_distributed_zero_first
 
+"""
+    Implementation for ROS
+"""
 import rosbag
 import rospy
 from cv_bridge import CvBridge
 from sensor_msgs.msg import Image as Image_ROS
+from sensor_msgs.msg import CompressedImage
 from queue import Queue
-
-frames_queue = Queue()
-frames_cut_queue = Queue()
 
 # Parameters
 HELP_URL = 'https://github.com/ultralytics/yolov5/wiki/Train-Custom-Data'
@@ -264,7 +266,7 @@ class LoadImages:
 class LoadROSBAG:
     '''
     Load FRAME FROM rosbag directly, without using ROS. Mainly for postprocessing
-    As is for postprocessing we assume that the img message is compressed
+    WARNING: This is not correct: As is for postprocessing we assume that the img message is compressed
     '''
     def __init__(self, sources, topic, fps=6, img_size=1024, stride=32, auto=True, height=1080, width=1920):
         self.mode = 'video'
@@ -339,81 +341,97 @@ class LoadROSBAG:
 
 class LoadROS:
     '''
-    Load FRAME FROM ROS MESSAGE. For real time usage or rosbag played from terminal using ROS
+    Load FRAME FROM ROS MESSAGE directly from ROS. For real time usage or rosbag played from terminal using ROS.
+    # WARNINGS:
+    - To accelerate the detection, we only take an image (1024x1024) in the middle of full image 
+    - It requires to start ros previusly
     '''
-    def __init__(self, sources, topic,fps=15, img_size=1024, stride=32, auto=True, height=1080, width=1920):
-        # ROS details
-        self.image_sub = rospy.Subscriber(topic, Image_ROS ,self.update, queue_size = 10)
-        self.spin_thread = Thread(target=lambda: rospy.spin(), daemon=True)
-        self.spin_thread.start()
-
+    def __init__(self, sources, topic, compressed = False, fps=15, img_size=1024, stride=32, auto=True, height=1080, width=1920):
+        print('[DETECTOR]: Creating ROS dataset node')
         self.mode = 'video'
         self.topic = topic
-        self.fps = fps*2
+        self.compressed = bool(compressed)
+        self.fps = fps
         self.img_size = img_size
         self.stride = stride
         self.auto = auto
         self.path = sources
+
+        # ROS details
+        if self.compressed:
+            self.image_sub = rospy.Subscriber(topic, CompressedImage ,self.update, queue_size = 10)
+        else:
+            self.image_sub = rospy.Subscriber(topic, Image_ROS ,self.update, queue_size = 10)
+
+        self.spin_thread = Thread(target=lambda: rospy.spin(), daemon=True)
+        self.spin_thread.start()
 
         self.height = height
         self.width = width
         self.delta_height = (self.height - self.img_size[0])/2
         self.delta_width = (self.width - self.img_size[0])/2
 
-        #self.imgs = np.zeros([1024,1024,3],dtype=np.uint8) # To ensure that we have a "first image"
-        self.frames = float('inf')  # infinite stream fallback
+        self.frames = float('inf')  # infinite stream fallback  
         self.count = 0
+        self.Cv_bridge = CvBridge()
 
-    def update(self, data):
+        self.queue_img0 = Queue()
+        self.queue_imgT = Queue()
+        self.queue_imgRP = Queue()
+
+    def update(self, msg):
         '''
-        Update frame to imgs
+        Update and queue objects to be pulled/called via iterable
+
+        path = Path to the file or Camera
+        img0 = Full raw image
+        imgT = Cropped raw image
+        imgRP = Cropped Resized and paded image while meeting stride-multiple constraints
+        None = object that hold the media (video or none if is an image)
+        '' = String with information
+        self.count = recieved frames
         '''
+
         try:
-            # Get image from PC
-            self.img0 = np.frombuffer(data.data, dtype=np.uint8).reshape(data.height, data.width, -1)
-            self.imgT = self.img0.copy()
-            self.imgT = self.imgT[int(self.delta_height):int(1024 + self.delta_height), int(self.delta_width):int(1024 + self.delta_width)]
-            self.count += 1
-            rospy.sleep(1/self.fps) # wait time
-
+            if bool(msg.data):
+                # Get image
+                if self.compressed:
+                    self.img0 = self.Cv_bridge.compressed_imgmsg_to_cv2(msg)
+                else:       
+                    self.img0 = np.frombuffer(msg.data, dtype=np.uint8).reshape(msg.height, msg.width, -1)[...,::-1]
+                self.imgT = self.img0.copy()
+                self.imgT = self.imgT[int(self.delta_height):int(1024 + self.delta_height), int(self.delta_width):int(1024 + self.delta_width)]
+                self.count += 1
+                # Letterbox
+                img_l = self.imgT.copy()
+                imgRP = letterbox(img_l, self.img_size, stride=self.stride, auto=self.auto)[0]
+                # Convert
+                imgRP = imgRP.transpose((2, 0, 1))[::-1]  # BGR to RGB, BHWC to BCHW
+                imgRP = np.ascontiguousarray(imgRP)
+                # Put in Queues
+                self.queue_img0.put(self.img0)
+                self.queue_imgT.put(self.imgT)
+                self.queue_imgRP.put(imgRP)
+                # And create a copy of RP to freeze image
+                self.frame_back_up = imgRP.copy()                 
+            else:
+                pass
         except:
             print('[WARNING]: A frame has been corrupted')
-            rospy.sleep(1/self.fps) # wait time
     
     def __iter__(self):
         return self
 
     def __next__(self):
-        '''
-            Get next object in the iterable. Return:
-
-            path = Path to the file
-            img = treated image respect to the segmented image
-            img0 = frame after processing
-            imgf = raw frame  
-            self.cap = object that hold the media (video or none if is an image)
-            s = String with information
-            self.total_count = count of images + videos frames).
-
-        '''
-        if cv2.waitKey(1) == ord('q') or cv2.waitKey(1) == 27:  # q or esc to quit
-            time.sleep(0.01)
-            cv2.destroyAllWindows()
-            raise StopIteration
-
-        # Letterbox
-        #self.imgT = frames_cut_queue.get()
-        img_l = self.imgT.copy()
-        imgRP = letterbox(img_l, self.img_size, stride=self.stride, auto=self.auto)[0]
-
-        # Convert
-        imgRP = imgRP.transpose((2, 0, 1))[::-1]  # BGR to RGB, BHWC to BCHW
-        imgRP = np.ascontiguousarray(imgRP)
-
-        return self.path, self.img0, self.imgT, imgRP, None, '', self.count
+        if not self.queue_img0.empty():
+            return True, None, self.queue_img0.get(block = True), self.queue_imgT.get(block = True), self.queue_imgRP.get(block = True), None, '', self.count
+        else: 
+            img = np.zeros((1024,1024,3), np.uint8)
+            _ = cv2.putText(img,'Waiting for frame', (100,500), cv2.FONT_HERSHEY_SIMPLEX, 3,(206,37,37), 3, 2)
+            return False, None, img, None, None,None, '', self.count
  
     def __len__(self):
-        return 1  # 1E12 frames = 32 streams at 30 FPS for 30 years
+        return 0
 
 class LoadWebcam:  # for inference
     # YOLOv5 local webcam dataloader, i.e. `python detect.py --source 0`
