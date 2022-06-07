@@ -27,7 +27,7 @@ from torch.utils.data import DataLoader, Dataset, dataloader, distributed
 from tqdm import tqdm
 from utils.augmentations import Albumentations, augment_hsv, copy_paste, letterbox, mixup, random_perspective
 from utils.general import (LOGGER, NUM_THREADS, check_dataset, check_requirements, check_yaml, clean_str,
-                           segments2boxes, xyn2xy, xywh2xyxy, xywhn2xyxy, xyxy2xywhn)
+                           segments2boxes, xyn2xy, xywh2xyxy, xywhn2xyxy, xyxy2xywhn, colorstr)
 from utils.torch_utils import torch_distributed_zero_first
 
 """
@@ -347,7 +347,7 @@ class LoadROS:
     - It requires to start ros previusly
     '''
     def __init__(self, sources, topic, compressed = False, fps=15, img_size=1024, stride=32, auto=True, height=1080, width=1920):
-        print('[DETECTOR]: Creating ROS dataset node')
+        print(colorstr('[ASPEN - DATASET ]: Creating ROS dataset'))
         self.mode = 'video'
         self.topic = topic
         self.compressed = bool(compressed)
@@ -357,13 +357,14 @@ class LoadROS:
         self.auto = auto
         self.path = sources
 
+        self.thread_flag = True
         # ROS details
         if self.compressed:
             self.image_sub = rospy.Subscriber(topic, CompressedImage ,self.update, queue_size = 10)
         else:
             self.image_sub = rospy.Subscriber(topic, Image_ROS ,self.update, queue_size = 10)
 
-        self.spin_thread = Thread(target=lambda: rospy.spin(), daemon=True)
+        self.spin_thread = Thread(target = lambda: rospy.spin(), daemon=True)
         self.spin_thread.start()
 
         self.height = height
@@ -417,19 +418,22 @@ class LoadROS:
             else:
                 pass
         except:
-            print('[WARNING]: A frame has been corrupted')
+            print(colorstr('[ASPEN - DATASET]: A frame has been corrupted'))
     
+    def close(self):
+        print(colorstr('[ASPEN - DATASET]: Closing Yolo_v5 wrapper'))
+
     def __iter__(self):
         return self
 
     def __next__(self):
-        if not self.queue_img0.empty():
-            return True, None, self.queue_img0.get(block = True), self.queue_imgT.get(block = True), self.queue_imgRP.get(block = True), None, '', self.count
-        else: 
+        if self.count == 0:
             img = np.zeros((1024,1024,3), np.uint8)
             _ = cv2.putText(img,'Waiting for frame', (100,500), cv2.FONT_HERSHEY_SIMPLEX, 3,(206,37,37), 3, 2)
             return False, None, img, None, None,None, '', self.count
- 
+        else:
+            return True, None, self.queue_img0.get(block = True), self.queue_imgT.get(block = True), self.queue_imgRP.get(block = True), None, '', self.count
+        
     def __len__(self):
         return 0
 

@@ -4,6 +4,7 @@ import sys
 import time
 import datetime
 import cv2
+import signal
 #import math
 #os.chdir('/home/ubuntu/Agroscope/ASPEN/Software/ROS/src/yolov5')
 
@@ -21,6 +22,11 @@ from visualization_msgs.msg import MarkerArray
 import ASPEN_detect
 import ASPEN_locator
 from utils.datasets_agroscope import LoadROS
+from utils.general import colorstr
+
+def signal_handler(sig, frame):
+    print(colorstr('[ASPEN - NODE   ]: Detector and polygon drawing closed'))
+    sys.exit()
 
 def detect_and_draw(
     weights = ROOT / 'weights/yolov5s.pt',
@@ -28,7 +34,10 @@ def detect_and_draw(
     ROS_topic = "/camera/color/image_raw",
     topic_compressed = False,
     FPS = 15):
-    print('\n[ASPEN   ]: Detector and polygon drawing started')
+    print(colorstr('\n[ASPEN - NODE    ]: Detector and polygon drawing started'))
+
+    # As we are using ROS launch, we need a good way to stop python
+    signal.signal(signal.SIGINT, signal_handler)
 
     rospy.init_node('YOLOv5', anonymous=False)
     dataset = LoadROS(sources = 'ROS',
@@ -44,9 +53,9 @@ def detect_and_draw(
         conf_thres = conf_thres)
 
     # And our box locator
-    #locator = ASPEN_locator.Detector()
+    locator = ASPEN_locator.Detector()
     
-    pub_frame = rospy.Publisher('YOLOv5_pub', Image_ROS, queue_size=5)
+    pub_frame = rospy.Publisher('/YOLOv5_pub', Image_ROS, queue_size=5)
     #pub_box = rospy.Publisher('ASPEN_bounding_boxes', MarkerArray, queue_size=10)
     br = CvBridge()
     
@@ -57,8 +66,6 @@ def detect_and_draw(
         else:
             break
 
-    detector.close()
-
 if __name__ == '__main__':
     try:        
         detect_and_draw(weights = rospy.get_param('YOLO_v5/weights'),
@@ -67,4 +74,6 @@ if __name__ == '__main__':
             topic_compressed = rospy.get_param('YOLO_v5/topic_compressed'),
             FPS = rospy.get_param('YOLO_v5/FPS'))
     except rospy.ROSInterruptException:
-        pass        
+        pass
+    finally:
+        print(1)
