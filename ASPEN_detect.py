@@ -1,5 +1,6 @@
 #!/home/ubuntu/Agroscope/Python_venvironments/YOLO_v5_venv/bin/python3
 from datetime import date, datetime
+import cv2 as cv
 import os
 import sys
 from pathlib import Path
@@ -25,16 +26,13 @@ from utils.plots import Annotator, colors, save_one_box
 from utils.torch_utils import select_device, time_sync
 
 # Tracker
-from trackers.sort.sort import * # as python code. directly from github
-#from ByteTrack.yolox.tracker.byte_tracker import BYTETracker as ByteTracker # The original bytetracker
-#from bytetrack_realtime.bytetrack_realtime.byte_tracker import ByteTracker # A realtime implementation
-#from trackers.ocsort.ocsort import OCSort 
+from trackers.ocsort.ocsort import OCSort
 
 @torch.no_grad()
 
 
 class YOLOv5():
-    def __init__(self, dataset , weights = ROOT / 'yolov5s.pt' , source = 'ROS', conf_thres = 0.4, data_yaml = ROOT / 'data/coco128.yaml'):
+    def __init__(self, dataset , weights = ROOT / 'yolov5s.pt' , source = 'ROS', conf_thres = 0.4, data_yaml = ROOT / 'data/coco128.yaml', tracker_sense = True):
         print(colorstr('[ASPEN - DETECTOR]: Starting Yolo_v5 wrapper'))
         self.dataset = dataset
         self.weights = weights  # model.pt path(s)
@@ -69,7 +67,18 @@ class YOLOv5():
         self.queue_stand_by_frame = Queue(maxsize = 1)
         self.seen =  -1 
         self.update_running = True
-        
+
+        # Tracker
+        self.mot_tracker = OCSort(det_thresh = self.conf_thres, max_age = 10, min_hits = 1, iou_threshold = 0.01, use_byte = False) # OCSort sort
+        self.tracker_limit = int(self.imgsz[0]*0.75) if tracker_sense == True else int(self.imgsz[0]*.25)
+        self.tracked_detections = []
+        self.max_count_MOT = 0
+
+
+        # Data to be published and used by ROS
+        self.newest_detections = [] # A list of list that contain coordinates, category, ID and score for each detection no previusly published
+        self.queue_detections = Queue()
+
         self.thread = threading.Thread(target=self.update, daemon=True)
         self.thread.start()
 
@@ -87,19 +96,6 @@ class YOLOv5():
 
         # Run inference
         self.model.warmup(imgsz=(1 if self.pt else self.bs, 3, *self.imgsz))  # warmup
-        
-        # Tracker
-        # Max_age = Maximum number of frames to keep alive a track without associated detections."
-        # min_hits = Minimum number of associated detections before track is initialised
-
-        # SORT:
-        self.mot_tracker = Sort(max_age=10, min_hits=3, iou_threshold=self.iou_thres-0.2)
-        # BYTETracker
-        #self.mot_tracker = ByteTracker(track_thresh = self.conf_thres, track_buffer = 100, match_thresh = 0, frame_rate = self.FPS)
-        # OCSort
-        #self.mot_tracker = OCSort(det_thresh = self.conf_thres, max_age = 10, min_hits = 2, iou_threshold = self.iou_thres - 0.1, use_byte = False)
-
-        # Get an image from ROS
         
         for status, path, img_raw, imgT, imgRP, vid_cap, s, img_idx in self.dataset:
             if self.update_running:
@@ -119,47 +115,35 @@ class YOLOv5():
                     # Process predictions
                     for i, det in enumerate(pred):  # per image
                         # Tracker update
-                        #online_targets =  self.mot_tracker.update([x.cpu().data.numpy() for x in pred][0]) # SORT
-                        #online_targets = self.mot_tracker.update(det, (1024,1024), (1024,1024))
-                        #online_targets = self.mot_tracker.update(det[:,0:5].cpu().numpy()) # OCSORT
+                        self.online_targets = self.mot_tracker.update(det[:,0:6].cpu().numpy()) # OCSORT
 
                         self.im0 = imgT.copy()
-
                         annotator = Annotator(self.im0, line_width=self.line_thickness, example=str(self.names))
 
-                        #tracked = self.mot_tracker.get_tracks(2)
-                        #for track in tracked:
-                        #    annotator.box_label(track[1:5], str(track[0]), color=colors(2, True))
+                        if len(self.online_targets):
+                            self.newest_detections = []
 
-                        if len(det):
-                            for *xyxy, conf, cls in reversed(det):
-                                annotator.box_label(xyxy, None, color=colors(1, True))
+                            for tracked_detection in self.online_targets:
+                                # tracked detections give the following array [x1,y1,x2,y2,track_ID, probability, category]
+                                annotator.box_label(tracked_detection[0:4], None, color=colors(3, True))
+                                # We count all objects that pass from either right to left or vise versa
+                                if (tracked_detection[0]+tracked_detection[2])/2 > self.tracker_limit:                                    
+                                    if not tracked_detection[4] in self.tracked_detections:
+                                        # We have to re add the borders to have in proper camera coordinates!
+                                        tracked_detection[0:4] = [tracked_detection[0] + self.delta_width,
+                                                                  tracked_detection[1] + self.delta_height,
+                                                                  tracked_detection[2] + self.delta_width,
+                                                                  tracked_detection[3] + self.delta_height]
 
-                            #for tracked_object in online_targets:
-                            #    annotator.box_label(tracked_object, None, color=colors(3, True))
+                                        self.tracked_detections.append(tracked_detection[4])
+                                        self.max_count_MOT += 1
+                                        self.newest_detections.append(tracked_detection)
+                        #_ = cv.line(annotator.result(), (self.tracker_limit,0),(self.tracker_limit,self.imgsz[0]), color=(255,0,0))
 
-                            # And we draw the box around
-                            #    _ = cv2.rectangle(annotator.result(),(x1,y1), (x2,y2), [255,255,255], 2)
-                            #    _ = cv2.putText(annotator.result(), name, (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, .5, [255,0,0], 2)
-                            #     # We count all objects that pass from right to left
-                            #     #if ((x1+x2)/2 < 512):
-                            #         #pass
-                            #         # if not (name_idx in self.objects_characteristics['id']):
-                            #         #     self.objects_characteristics['id'].append(name_idx)
-                            #         #     self.objects_characteristics['class'].append(class_idx)
-                            #         #     # And here we should append also the size, but i guess that is thread dependend
-                            #         #     self.size_queue.put(class_idx)
-                            #         #     self.size_threads.append(None)
-                            #         #     self.size_threads[self.size_threads_counter] = Thread(target = self.get_size, 
-                            #         #         args=(name_idx,self.size_threads_counter), 
-                            #         #         daemon = True)
-                            #         #     self.size_threads[self.size_threads_counter].start()
-                            #         #     self.size_threads_counter += 1
-
-                        #cv2.line(annotator.result(),(512,0),(512,1024), color=(255,0,0))
-                        # Stream results
                         self.im0 = annotator.result()
                         self.queue_frame.put(self.im0)
+                        self.queue_detections.put(self.newest_detections)
+
                         # We will copy the image to queue_stand_by_frame so it doesnt block the iteration
                         self.queue_stand_by_frame.put(self.im0)
 
@@ -171,8 +155,8 @@ class YOLOv5():
 
     def close(self):
         self.update_running = False
+        print(colorstr('[ASPEN - DETECTOR]: We count '+ str(self.max_count_MOT) +' objects'))
         print(colorstr('[ASPEN - DETECTOR]: Closing Yolo_v5 wrapper'))
-        sys.exit()
 
 
     def __iter__(self):
@@ -181,7 +165,6 @@ class YOLOv5():
 
     def __next__(self):
         if self.queue_frame.qsize() > 0:
-            return True, self.queue_frame.get(), self.seen
+            return True, self.queue_frame.get(),self.queue_detections.get(), self.seen
         else:
-            return False, self.queue_stand_by_frame.get(), self.seen
-        
+            return False, self.queue_stand_by_frame.get(),False, self.seen

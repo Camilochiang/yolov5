@@ -196,22 +196,16 @@ class OCSort(object):
           dets - a numpy array of detections in the format [[x1,y1,x2,y2,score],[x1,y1,x2,y2,score],...]
         Requires: this method must be called once for each frame even with empty detections (use np.empty((0, 5)) for frames without detections).
         Returns the a similar array, where the last column is the object ID.
-        NOTE: The number of objects returned may differ from the number of detections provided.
+        # 20220616 :Modified to return x1y1x2y2, ID, category and probability
         """
         if output_results is None:
-            return np.empty((0, 5))
+            return []
 
         self.frame_count += 1
         # post_process detections
-        if output_results.shape[1] == 5:
-            # Assuming that is already in cpu
-            scores = output_results[:, 4]
-            bboxes = output_results[:, :4]
-        else:
-            # Assume that is in GPU
-            output_results = output_results.cpu().numpy()
-            scores = output_results[:, 4] * output_results[:, 5]
-            bboxes = output_results[:, :4]  # x1y1x2y2
+        # Assuming that is already in cpu
+        scores = output_results[:, 4]
+        bboxes = output_results[:, :4]
 
         dets = np.concatenate((bboxes, np.expand_dims(scores, axis=-1)), axis=1)
         inds_low = scores > 0.1
@@ -321,8 +315,12 @@ class OCSort(object):
             if(trk.time_since_update > self.max_age):
                 self.trackers.pop(i)
         if(len(ret) > 0):
-            return np.concatenate(ret)
-        return np.empty((0, 5))
+            for pos, t in enumerate(ret):
+                if t[0][0:4].round() in bboxes.round(): # We have issues with decimals so we use round values. Other option will be np.rint(), not sure what is faster
+                    idx = bboxes.round().tolist().index(t[0][0:4].round().tolist())
+                    ret[pos] = np.append(t[0][0:5],output_results[idx,4:6])                    # We will take the original probability and class
+            return ret
+        return []
 
     def update_public(self, dets, cates, scores):
         self.frame_count += 1
