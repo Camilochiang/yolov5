@@ -1,0 +1,6 @@
+[submodule "trackers/sort_oh"]
+	path = trackers/sort_oh
+	url = https://github.com/Camilochiang/sort_oh
+[submodule "trackers/sort"]
+	path = trackers/sort
+	url = https://github.com/Camilochiang/sort
