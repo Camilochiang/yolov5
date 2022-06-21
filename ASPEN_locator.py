@@ -101,17 +101,19 @@ class Tracer():
 
         # And we will publishe an array
         self.pub_marker_array = rospy.Publisher('/ASPEN/3D_detections', MarkerArray, queue_size = 10)
+        # We will have up to 4 categories
+        self.markers_colors = [[0.180, 0.349, 0.141],[0.749, 0.745, 0.192],[0.949, 0.498, 0.070],[0.752, 0.137, 0.066]]
         
         self.marker = Marker()
         self.marker.id = 0
         self.marker.header.frame_id = "/world"
-        self.marker.scale.x = .1 # Default marker is 1 m
-        self.marker.scale.y = .1
-        self.marker.scale.z = .1
-        self.marker.color.r = 1.0
-        self.marker.color.g = 1.0
-        self.marker.color.b = 1.0
-        self.marker.color.a = 1.0
+        self.marker.scale.x = .08 # Default marker is 1 m
+        self.marker.scale.y = .08
+        self.marker.scale.z = .08
+        self.marker.color.r = self.markers_colors[0][0]
+        self.marker.color.g = self.markers_colors[0][1]
+        self.marker.color.b = self.markers_colors[0][2]
+        self.marker.color.a = 0.75
         self.marker.type = 1
         self.marker.pose.orientation.x = 0.0
         self.marker.pose.orientation.y = 0.0
@@ -160,42 +162,23 @@ class Tracer():
                         Trace = False
 
                 if Trace:
+                    self.marker.color.r = self.markers_colors[int(detection[6])][0] 
+                    self.marker.color.g = self.markers_colors[int(detection[6])][1] 
+                    self.marker.color.b = self.markers_colors[int(detection[6])][2] 
+
                     # 1. We pass from pixel to camera distances using the intrinsic and deep, then we pass to ROS using the predefined transformation
                     xy_left_top = np.array([detection[0], detection[1], 1])
                     xy_left_top = (np.linalg.inv(self.camera.intrinsic) @ xy_left_top * z_value) #@ self.camera.Cv2ROS
                     xy_rightbottom = np.array([detection[2], detection[3], 1])
                     xy_rightbottom = (np.linalg.inv(self.camera.intrinsic) @ xy_rightbottom * z_value)# @ self.camera.Cv2ROS
 
-                    print()
-                    print()
-                    print('Detection', *detection)
-                    print('xy_left_top',*xy_left_top)
-                    print('zvalues', self.z_values)
-                    print('zvalue', z_value)
-                    # Finally we use the extrinsics to transform to real world
-                    print('camera pose')
-                    print(self.camera.camera_pose)
-                    camera_pose = np.identity(4)
-                    camera_pose[:3,:3] = self.camera.camera_pose[:3,:3]
-                    print(camera_pose)
-                    print('mul')
-                    print((camera_pose @ np.append(xy_left_top, 1))[:3])
+                    xy_left_top = (self.camera.camera_pose @ np.append(xy_left_top, 1))[:3]
 
-                    print(self.camera.camera_pose[:3,3])
-
-                    
-
-                    xy_left_top = self.camera.camera_pose[:3,3] + (camera_pose @ np.append(xy_left_top, 1))[:3]
-
-                    #xy_left_top = (self.camera.camera_pose @ np.append(xy_left_top, 1))[:3]
-                    print('marker:', *xy_left_top)
                     # The pivot point of a cube is at the center of it.
                     self.marker.pose.position.x =  xy_left_top[0]
                     self.marker.pose.position.y =  xy_left_top[1]
                     self.marker.pose.position.z =  xy_left_top[2]
                     self.marker_array.markers.append(self.marker) 
-                    print()
-                    print()
 
                     # Write to file. So basically if there is no depth we will no have it later in the file
                     for item in detection:
