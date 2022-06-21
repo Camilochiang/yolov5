@@ -4,3 +4,6 @@
 [submodule "trackers/sort"]
 	path = trackers/sort
 	url = https://github.com/Camilochiang/sort
+[submodule "trackers/ByteTrack"]
+	path = trackers/ByteTrack
+	url = https://github.com/Camilochiang/ByteTrack
