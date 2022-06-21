@@ -1,3 +1,5 @@
+[20220621] : A modified copy of YoloV5 to be used in ROS
+
 <div align="center">
 <p>
    <a align="left" href="https://ultralytics.com/yolov5" target="_blank">
